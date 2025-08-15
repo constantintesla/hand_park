@@ -103,6 +103,7 @@ frame,timestamp,hand_0_x,hand_0_y,hand_0_z,...,hand_20_z
 
 📂 Структура проекта
 hand-motion-analysis/
+
 ├── main.py                # Главный скрипт
 
 ├── hand_tracker.py        # Модуль трекинга
