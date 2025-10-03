@@ -9,7 +9,13 @@ def analyze_video(video_path, output_csv="hand_data.csv", show_video=True):
     # Инициализация моделей
     yolo_model = YOLO('yolov8n.pt')  # YOLO для обнаружения людей
     mp_hands = mp.solutions.hands
-    hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5)
+    # Улучшенные параметры для более стабильного трекинга
+    hands = mp_hands.Hands(
+        static_image_mode=False, 
+        max_num_hands=2, 
+        min_detection_confidence=0.3,  # Снижен порог для лучшей детекции
+        min_tracking_confidence=0.3    # Добавлен порог трекинга
+    )
     mp_drawing = mp.solutions.drawing_utils
     
     # Открытие видеофайла
@@ -34,6 +40,7 @@ def analyze_video(video_path, output_csv="hand_data.csv", show_video=True):
         yolo_results = yolo_model(frame, classes=[0])  # класс 0 - человек
         boxes = yolo_results[0].boxes.xyxy.cpu().numpy()
         
+        # Если YOLO нашел человека, используем ROI
         if len(boxes) > 0:
             # Берем первого обнаруженного человека (можно модифицировать для нескольких)
             x1, y1, x2, y2 = map(int, boxes[0])
@@ -41,27 +48,40 @@ def analyze_video(video_path, output_csv="hand_data.csv", show_video=True):
             
             # Обнаружение рук в области человека
             results = hands.process(cv2.cvtColor(person_roi, cv2.COLOR_BGR2RGB))
-            
-            if results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
-                    # Получаем координаты ключевых точек кисти
-                    landmarks = []
-                    for landmark in hand_landmarks.landmark:
-                        x = x1 + landmark.x * (x2 - x1)
-                        y = y1 + landmark.y * (y2 - y1)
-                        z = landmark.z
-                        landmarks.extend([x, y, z])
-                    
-                    # Сохраняем данные для текущего кадра
-                    hand_data.append([frame_count, timestamp] + landmarks)
-                    
-                    # Визуализация
-                    if show_video:
-                        mp_drawing.draw_landmarks(
-                            frame, hand_landmarks, mp_hands.HAND_CONNECTIONS,
-                            mp.solutions.drawing_styles.get_default_hand_landmarks_style(),
-                            mp.solutions.drawing_styles.get_default_hand_connections_style())
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        else:
+            # Fallback: детекция рук на всем кадре, если YOLO не нашел человека
+            results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            x1, y1, x2, y2 = 0, 0, frame.shape[1], frame.shape[0]  # Весь кадр
+        
+        # Обработка результатов детекции рук
+        if results.multi_hand_landmarks:
+            # MediaPipe выдает согласованные списки landmarks и handedness
+            handedness_list = results.multi_handedness if hasattr(results, 'multi_handedness') else None
+            for idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
+                hand_label = 'unknown'
+                if handedness_list and len(handedness_list) > idx:
+                    try:
+                        hand_label = handedness_list[idx].classification[0].label.lower()  # 'left' или 'right'
+                    except Exception:
+                        hand_label = 'unknown'
+                # Получаем координаты ключевых точек кисти
+                landmarks = []
+                for landmark in hand_landmarks.landmark:
+                    x = x1 + landmark.x * (x2 - x1)
+                    y = y1 + landmark.y * (y2 - y1)
+                    z = landmark.z
+                    landmarks.extend([x, y, z])
+                
+                # Сохраняем данные для текущего кадра
+                hand_data.append([frame_count, timestamp, hand_label] + landmarks)
+                
+                # Визуализация
+                if show_video:
+                    mp_drawing.draw_landmarks(
+                        frame, hand_landmarks, mp_hands.HAND_CONNECTIONS,
+                        mp.solutions.drawing_styles.get_default_hand_landmarks_style(),
+                        mp.solutions.drawing_styles.get_default_hand_connections_style())
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
         
         if show_video:
             cv2.imshow('Hand Tracking', frame)
@@ -75,7 +95,7 @@ def analyze_video(video_path, output_csv="hand_data.csv", show_video=True):
     
     # Сохранение данных в CSV
     if hand_data:
-        columns = ['frame', 'timestamp']
+        columns = ['frame', 'timestamp', 'hand']
         for i in range(21):  # 21 ключевая точка в MediaPipe Hands
             columns.extend([f'hand_{i}_x', f'hand_{i}_y', f'hand_{i}_z'])
         

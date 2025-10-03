@@ -46,3 +46,5 @@ Thumbs.db
 # Временные файлы анализа
 temp/
 tmp/
+videos/
+*.pt
